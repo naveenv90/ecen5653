@@ -1,7 +1,7 @@
 #!/bin/sh
 module="ssd"
 device="ssd"
-
+block="ssdr"
 # invoke rmmod with all arguments we got
 /sbin/rmmod $module $* || exit 1
 
@@ -13,3 +13,4 @@ rm -f /dev/${device}3
 rm -f /dev/${device}4
 rm -f /dev/${device}5
 rm -f /dev/${device}6
+rm -f /dev/${block}

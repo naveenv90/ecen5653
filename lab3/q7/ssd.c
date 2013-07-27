@@ -27,6 +27,7 @@
 #define MAX_SSD_DEV 7
 #define MAX_LBAS_PER_SSD 1024
 #define LBA_SIZE 512
+#define printchar(Y) printk("%c%c%c%c%c%c%c%c",(0xFF & Y),(0xFF00 & Y),(0xFF0000 & Y),(0xFF000000 & Y),(0xFF00000000 & Y),(0xFF0000000000 & Y),(0xFF000000000000 & Y),(0xFF00000000000000 & Y))
 
 static int ssd_major = 0;
 module_param(ssd_major, int, 0);
@@ -154,7 +155,7 @@ ssize_t ssd_write(struct file *filp,
                   loff_t *f_pos)
 {
         ssize_t retval = -ENOMEM;
-        int ssdIdx;
+        int ssdIdx,i;
 
         ssdIdx=iminor(filp->f_dentry->d_inode);
 
@@ -187,7 +188,9 @@ ssize_t ssd_write(struct file *filp,
             }*/
             
             copy_from_user(write_buffer,buf,512);
-            printk("\n CAME OUT FROM copy_from_user");
+            //printk("\n CAME OUT FROM copy_from_user");
+            for(i=0;i<512;i++)
+            //printk("%c",write_buffer[i]);
             compute_raid_5();
         }      
         
@@ -359,15 +362,19 @@ void compute_raid_5(void)
     for(k=0;k<16;k++)
     {       //printk("\n INSIDE K LOOP K:%d",k);
 	    data_ip[0]=*cur_loc;
-	    //printk("\n THE VALUE OF data_ip[0]:%d",data_ip[0]);
+	    //printk("\n THE VALUE OF data_ip[0]:%d",data_ip[0])
+            //printchar(data_ip[0]);
             cur_loc++;
 	    data_ip[1]=*cur_loc;
+             //printchar(data_ip[1]);
             //printk("\n THE VALUE OF data_ip[1]:%d",data_ip[1]);
 	    cur_loc++;
 	    data_ip[2]=*cur_loc;
+             //printchar(data_ip[2]);
             //printk("\n THE VALUE OF data_ip[2]:%d",data_ip[2]);
 	    cur_loc++;
 	    data_ip[3]=*cur_loc;
+            //printchar(data_ip[3]);
             //printk("\n THE VALUE OF data_ip[3]:%d",data_ip[3]);
             cur_loc++;
 	    parity_out=data_ip[0] ^ data_ip[1] ^ data_ip[2] ^ data_ip[3];      
@@ -378,9 +385,10 @@ void compute_raid_5(void)
               //printk("\n INSIDE i LOOP i:%d",i);
 	      if(i!=p)
 	       {
-                cur_ssd[k]=data_ip[j];
+                cur_ssd[k]=data_ip[j];                 
 		j++;
-               printk("\n THE value of cur_ssd:%d",cur_ssd[k]);
+ 		printchar(cur_ssd[k]);
+               //printk("\n THE value of cur_ssd:%d",cur_ssd[k]);
 	       }
 	      else
 	       { 
@@ -414,7 +422,7 @@ void decode_raid_5()
                j++;
                }
             }
-            printk("\n The value of p is %d\n",p);
+            //printk("\n The value of p is %d\n",p);
             if(p==0)
 	    p=4;
 	    else if(p!=0)

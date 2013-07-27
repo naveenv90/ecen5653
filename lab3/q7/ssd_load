@@ -21,3 +21,4 @@ mknod /dev/${device}5 c $major 5
 mknod /dev/${device}6 c $major 6
 mknod /dev/${block}   c $major 7
 chmod $mode  /dev/${device}*
+chmod $mode  /dev/${block}
