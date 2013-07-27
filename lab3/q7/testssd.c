@@ -31,22 +31,24 @@ int main(void)
     unsigned int i=0;
     // Read and print out first N bytes
     printf("READ FROM SSD:\n");
+    
+    printf("\n");
+    printf("WRITE TO SSD:\n");
+   // lseek(ssd1, 0, SEEK_SET);
+    write(ssd1, &testLBA2[0], 512);
+
     read(ssd1, &testLBA1[0], 512);
     //printf("test = %2X %2X %2X %2X\n", testLBA1[508], testLBA1[509], testLBA1[510], testLBA1[511]);
     for (i=0;i<512;i++)
     printf("%c",testLBA1[i]);
      
-    printf("\n");
-    printf("WRITE TO SSD:\n");
-    lseek(ssd1, 0, SEEK_SET);
-    write(ssd1, &testLBA2[0], 512);
 
- 
+ /*
    printf("READ FROM SSD:\n");
     printf("READ FROM SSD:\n");
-    lseek(ssd1,0,SEEK_SET);
-    read(ssd1, &testLBA1[0], 512);
-    //printf("test = %2X %2X %2X %2X\n", testLBA1[508], testLBA1[509], testLBA1[510], testLBA1[511]);
+   lseek(ssd1,0,SEEK_SET);
+   read(ssd1, &testLBA1[0], 512);
+    printf("test = %2X %2X %2X %2X\n", testLBA1[508], testLBA1[509], testLBA1[510], testLBA1[511]);
      
     for (i=0;i<512;i++)
     printf("%c",testLBA1[i]);
@@ -63,7 +65,7 @@ int main(void)
     printf("%2X",testLBA1[i]);
      
     printf("\n");
-    //printf("test = %2X %2X %2X %2X\n", testLBA1[1], testLBA1[2], testLBA1[3], testLBA1[4]);
-
+    printf("test = %2X %2X %2X %2X\n", testLBA1[1], testLBA1[2], testLBA1[3], testLBA1[4]);
+*/
     close(ssd1);
 }

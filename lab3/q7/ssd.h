@@ -6,6 +6,9 @@
 
 #define SSD_IOCTL_ERASE    _IO(SSD_IOCTL_MAGIC, 0)
 
+void decode_raid_5(void);
+void compute_raid_5(void);
+
 struct ssd_dev
 {
         unsigned long size;       /* amount of data stored here */

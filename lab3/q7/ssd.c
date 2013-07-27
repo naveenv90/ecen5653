@@ -34,18 +34,18 @@ MODULE_AUTHOR("Sam Siewert");
 MODULE_LICENSE("GPL");
 
 // Minor # is used to index each SSD device
-static struct cdev ssdCdevs[MAX_SSD_DEV];
-static struct ssd_dev ssdDevs[MAX_SSD_DEV];
+static struct cdev ssdCdevs[MAX_SSD_DEV+1];
+static struct ssd_dev ssdDevs[MAX_SSD_DEV+1];
 static unsigned char ssdData[MAX_SSD_DEV][MAX_LBAS_PER_SSD*LBA_SIZE];
 char write_buffer[512];
 char read_buffer[512];
-writecount=0;
-
+int writecount=0;
 static int ssd_open (struct inode *inode, struct file *filp)
 {
         int ssdIdx;
-
+        int i=0;
         ssdIdx=iminor(filp->f_dentry->d_inode);
+        printk("\n the value of ssdIdx %d",ssdIdx);
         if(ssdIdx==7)
         {
           for(i=0;i<MAX_SSD_DEV;i++)
@@ -159,7 +159,8 @@ ssize_t ssd_write(struct file *filp,
         ssdIdx=iminor(filp->f_dentry->d_inode);
 
         printk(KERN_INFO "SSD: WRITE started for %d\n", ssdIdx);
-  
+        if (down_interruptible(&ssdDevs[ssdIdx].sem))
+                return -ERESTARTSYS;
         if(ssdIdx==7)
         {
          //Assumption::User always passes a 512 byte raid
@@ -186,10 +187,10 @@ ssize_t ssd_write(struct file *filp,
             }*/
             
             copy_from_user(write_buffer,buf,512);
+            printk("\n CAME OUT FROM copy_from_user");
             compute_raid_5();
         }      
-        if (down_interruptible(&ssdDevs[ssdIdx].sem))
-                return -ERESTARTSYS;
+        
 
         // Copy data from user buffer to SSD
         //
@@ -199,7 +200,8 @@ ssize_t ssd_write(struct file *filp,
         //
         // Starting example does simple copy only.
         //
-        
+        else
+        {
         if(copy_from_user(&ssdData[ssdIdx][*f_pos], buf, count))
         {
             up(&ssdDevs[ssdIdx].sem);
@@ -216,7 +218,7 @@ ssize_t ssd_write(struct file *filp,
         /* update the size */
         if (ssdDevs[ssdIdx].size < *f_pos)
                 ssdDevs[ssdIdx].size = *f_pos;
-
+        }
         up(&ssdDevs[ssdIdx].sem);
 
         printk(KERN_INFO "SSD: WRITE finished\n");
@@ -321,6 +323,10 @@ static int ssd_init(void)
                 *((unsigned int *)(&ssdData[i][j]))=0xFFFFFFFF;
             }
         }
+            ssd_setup_cdev(ssdCdevs+i, i, &ssd_ops);
+
+            sema_init(&ssdDevs[i].sem,1);
+
 
         printk(KERN_INFO "SSD: INITIALIZED %d SSD ram devices\n", MAX_SSD_DEV);
 
@@ -344,61 +350,74 @@ void compute_raid_5(void)
 {
     unsigned char i=0,j=0,p=4;
     unsigned int k=0;
+    unsigned long long data_ip[4];
+    unsigned long long parity_out,temp;
     cur_loc=(unsigned long long *)write_buffer;
-    cur_ssd=(unsigned long long *)ssdData;
-    unsigned long long data_ip[4],parity_out;
-
-    for(k=0;k<512;k+=8)
-    {
+    
+    printk("\n BEFORE LOOP K");
+   
+    for(k=0;k<16;k++)
+    {       //printk("\n INSIDE K LOOP K:%d",k);
 	    data_ip[0]=*cur_loc;
-	    cur_loc++;
+	    //printk("\n THE VALUE OF data_ip[0]:%d",data_ip[0]);
+            cur_loc++;
 	    data_ip[1]=*cur_loc;
+            //printk("\n THE VALUE OF data_ip[1]:%d",data_ip[1]);
 	    cur_loc++;
 	    data_ip[2]=*cur_loc;
+            //printk("\n THE VALUE OF data_ip[2]:%d",data_ip[2]);
 	    cur_loc++;
 	    data_ip[3]=*cur_loc;
+            //printk("\n THE VALUE OF data_ip[3]:%d",data_ip[3]);
             cur_loc++;
 	    parity_out=data_ip[0] ^ data_ip[1] ^ data_ip[2] ^ data_ip[3];      
 	    j=0;
 	    for(i=0;i<5;i++)
 	    {
+              cur_ssd=ssdData[i];
+              //printk("\n INSIDE i LOOP i:%d",i);
 	      if(i!=p)
 	       {
-		cur_ssd[i][k]=data_ip[j];
+                cur_ssd[k]=data_ip[j];
 		j++;
+               printk("\n THE value of cur_ssd:%d",cur_ssd[k]);
 	       }
 	      else
 	       { 
-		cur_ssd[i][k]=parity_out; 
+		cur_ssd[k]=parity_out;
+ 
 	       }
 	    }
 	    if(p==0)
 	    p=4;
-	    if(p!=0)
+	    else if(p!=0)
 	    p--;
     }
 }
 
 char f;
-unsigned long long *read_loc,*read_ssd;
+unsigned long long *read_loc,**read_ssd;
 void decode_raid_5()
 {
-        unsigned char p=4,j=0;
-        read_loc=(unsigned long long)read_buffer;
-	read_ssd=(unsigned long long)ssdData;
-        for(k=0;k<512;k+=8)
-        {   j=0;
+        unsigned char p=4,k=0,j=0,i=0;
+        
+	read_ssd=(unsigned long long *)ssdData;
+        read_loc=(unsigned long long *)read_buffer;
+        for(k=0;k<16;k++)
+        {   
             for(i=0;i<5;i++)
             {
+              read_ssd=ssdData[i];
               if(i!=p)
               {
-               read_loc[j]=read_ssd[i][k];
+               read_loc[j]=read_ssd[k];
                j++;
                }
             }
+            printk("\n The value of p is %d\n",p);
             if(p==0)
 	    p=4;
-	    if(p!=0)
+	    else if(p!=0)
 	    p--;
         }
 }
