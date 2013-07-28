@@ -6,8 +6,11 @@
 
 #define SSD_IOCTL_ERASE    _IO(SSD_IOCTL_MAGIC, 0)
 
+#define SSD_IOCTL_RECOVER _IO(SSD_IOCTL_MAGIC, 1)
+
 void decode_raid_5(void);
 void compute_raid_5(void);
+void raid5_recover(int failure);
 
 struct ssd_dev
 {

@@ -255,6 +255,9 @@ long ssd_ioctl(/*struct inode *inode,*/ struct file *filp,
             }
             /*unlock_kernel();*/
             break;
+         case SSD_IOCTL_RECOVER:
+           raid5_recover(ssdIdx);
+           break;
 
           default:  /* redundant, as cmd was checked against MAXNR */
           /*unlock_kernel();*/      
@@ -428,6 +431,34 @@ void decode_raid_5()
 	    else if(p!=0)
 	    p--;
         }
+}
+
+void raid5_recover(int failure)
+{
+unsigned long long recover;
+int k,i;
+cur_ssd=(unsigned long long *)ssdData;
+
+ for(k=0;k<16;k++)
+    {     
+ 
+	    recover = 0;
+	    for(i=0;i<5;i++)
+	    {      
+             
+	      if(i!=failure)
+	       {
+   		cur_ssd=ssdData[i];
+               recover ^=cur_ssd[k];               
+		
+	   	}
+	    }
+	
+	cur_ssd = ssdData[failure];
+	cur_ssd[k] = recover;
+            
+  
+	} 
 }
 module_init(ssd_init);
 module_exit(ssd_cleanup);
