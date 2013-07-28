@@ -64,7 +64,11 @@ int main(void)
     }
 
    ioctl(ssd2,SSD_IOCTL_ERASE,0);
-   printf("ssd2 erased\n");
+   printf("ssd2 erased\n"); //ssd2 failed
+	printf("WRITE TO SSD2:\n");
+   	// lseek(ssd1, 0, SEEK_SET);
+    	write(ssdr, &testLBA2[0], 512);
+ 
 
  // Read and print out first N bytes
     printf("READ FROM SSD:\n");
@@ -75,8 +79,8 @@ int main(void)
 
 
    /*recover*/
-  printf("\nRecovering from failure\n");
-   ioctl(ssd2,SSD_IOCTL_RECOVER,0);
+  //printf("\nRecovering from failure\n");
+   //ioctl(ssd2,SSD_IOCTL_RECOVER,0);
 
 
 

@@ -28,7 +28,7 @@
 #define MAX_LBAS_PER_SSD 1024
 #define LBA_SIZE 512
 #define printchar(Y) printk("%c%c%c%c%c%c%c%c",(0xFF & Y),(0xFF00 & Y),(0xFF0000 & Y),(0xFF000000 & Y),(0xFF00000000 & Y),(0xFF0000000000 & Y),(0xFF000000000000 & Y),(0xFF00000000000000 & Y))
-
+int diskFail = 255;
 static int ssd_major = 0;
 module_param(ssd_major, int, 0);
 MODULE_AUTHOR("Sam Siewert");
@@ -110,37 +110,49 @@ ssize_t ssd_read(struct file *filp,
             return -ERESTARTSYS;
         if(ssdIdx!=7)
         {
-        if (*f_pos >= ssdDevs[ssdIdx].size)
-        {
-            //up(&ssdDevs[ssdIdx].sem);
-            return -EIO;
-        }
+		if(diskFail == ssdIdx)
+		{
+			printk("Disk Error\n");
+			up(&ssdDevs[ssdIdx].sem);
+			return -EFAULT;
+		}
 
-        // Read up to end of SSD buffer
-        //
-        if (*f_pos + count > ssdDevs[ssdIdx].size)
-                count = ssdDevs[ssdIdx].size - *f_pos;
+        	if (*f_pos >= ssdDevs[ssdIdx].size)
+        	{
+            	//up(&ssdDevs[ssdIdx].sem);
+            	return -EIO;
+       		}
+
+        	// Read up to end of SSD buffer
+        	//
+        	if (*f_pos + count > ssdDevs[ssdIdx].size)
+                	count = ssdDevs[ssdIdx].size - *f_pos;
 
 
-        if(copy_to_user(buf, &ssdData[ssdIdx][*f_pos], count))
-        {
-            up(&ssdDevs[ssdIdx].sem);
-            return -EFAULT;
-        }
-        else
-        {
-            *f_pos += count;
-            retval = count;
-        }
+        	if(copy_to_user(buf, &ssdData[ssdIdx][*f_pos], count))
+        	{
+            	up(&ssdDevs[ssdIdx].sem);
+            	return -EFAULT;
+        	}
+        	else
+        	{
+            	*f_pos += count;
+            	retval = count;
+        	}
         }
         else
          {
-            decode_raid_5();
-             if(copy_to_user(buf, read_buffer, 512))
-        {
-            up(&ssdDevs[ssdIdx].sem);
-            return -EFAULT;
-        }
+		if(diskFail != 255)
+		{
+			raid5_recover(diskFail);
+			diskFail = 255; //back to healthy state
+		}
+            	decode_raid_5();
+             	if(copy_to_user(buf, read_buffer, 512))
+        	{
+            		up(&ssdDevs[ssdIdx].sem);
+            		return -EFAULT;
+        	}
          }
         up(&ssdDevs[ssdIdx].sem);
 
@@ -164,6 +176,11 @@ ssize_t ssd_write(struct file *filp,
                 return -ERESTARTSYS;
         if(ssdIdx==7)
         {
+          if(diskFail != 255)
+		{
+		raid5_recover(diskFail);
+		diskFail = 255; //back to healthy state
+		}
          //Assumption::User always passes a 512 byte raid
            /* writecount+=count;
             if 
@@ -205,23 +222,33 @@ ssize_t ssd_write(struct file *filp,
         //
         else
         {
-        if(copy_from_user(&ssdData[ssdIdx][*f_pos], buf, count))
-        {
-            up(&ssdDevs[ssdIdx].sem);
-            return -EFAULT;
-        }
-        else
-        {
-            // Update file position
-            *f_pos += count;
-            retval = count;
-        }
+	
+	if(diskFail == ssdIdx)
+	{
+	printk("Disk Error\n");
+	up(&ssdDevs[ssdIdx].sem);
+	return -EFAULT;
+	}
+	else
+	{
+       	 	if(copy_from_user(&ssdData[ssdIdx][*f_pos], buf, count))
+       	 	{
+           	 up(&ssdDevs[ssdIdx].sem);
+            	return -EFAULT;
+        	}
+       		else
+        	{
+            	// Update file position
+            	*f_pos += count;
+            	retval = count;
+        	}
 
 
-        /* update the size */
-        if (ssdDevs[ssdIdx].size < *f_pos)
+        	/* update the size */
+        	if (ssdDevs[ssdIdx].size < *f_pos)
                 ssdDevs[ssdIdx].size = *f_pos;
-        }
+        	}
+	}
         up(&ssdDevs[ssdIdx].sem);
 
         printk(KERN_INFO "SSD: WRITE finished\n");
@@ -253,10 +280,13 @@ long ssd_ioctl(/*struct inode *inode,*/ struct file *filp,
                 if(j>0 && j<=512) 
                 printk("%d",j);
             }
+		/*disk fail flag set*/
+		diskFail = ssdIdx;
             /*unlock_kernel();*/
             break;
          case SSD_IOCTL_RECOVER:
            raid5_recover(ssdIdx);
+	   diskFail = 255; // all disks recovered
            break;
 
           default:  /* redundant, as cmd was checked against MAXNR */
@@ -360,7 +390,7 @@ void compute_raid_5(void)
     unsigned long long parity_out,temp;
     cur_loc=(unsigned long long *)write_buffer;
     
-    printk("\n BEFORE LOOP K");
+    
    
     for(k=0;k<16;k++)
     {       //printk("\n INSIDE K LOOP K:%d",k);
