@@ -1,0 +1,584 @@
+/*
+ * Solid State Disk Example Driver
+ *
+ */
+
+
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/init.h>
+#include <linux/smp.h>
+#include <linux/kernel.h>
+#include <linux/slab.h>
+#include <linux/fs.h> 
+#include <linux/errno.h>
+#include <linux/types.h> 
+#include <linux/mm.h>
+#include <linux/kdev_t.h>
+#include <asm/page.h>
+#include <asm/system.h>
+#include <asm/uaccess.h>
+#include <linux/cdev.h>
+
+#include <linux/device.h>
+
+#include "ssd.h"
+
+#define MAX_SSD_DEV 7
+#define MAX_LBAS_PER_SSD 1024
+#define LBA_SIZE 512
+#define printchar(Y) printk("%c%c%c%c%c%c%c%c",(0xFF & Y),(0xFF00 & Y),(0xFF0000 & Y),(0xFF000000 & Y),(0xFF00000000 & Y),(0xFF0000000000 & Y),(0xFF000000000000 & Y),(0xFF00000000000000 & Y))
+int diskFail = 255;
+static int ssd_major = 0;
+module_param(ssd_major, int, 0);
+MODULE_AUTHOR("Sam Siewert");
+MODULE_LICENSE("GPL");
+
+// Minor # is used to index each SSD device
+static struct cdev ssdCdevs[MAX_SSD_DEV+1];
+static struct ssd_dev ssdDevs[MAX_SSD_DEV+1];
+static unsigned char ssdData[MAX_SSD_DEV][MAX_LBAS_PER_SSD*LBA_SIZE];
+char write_buffer[512];
+char read_buffer[512];
+int writecount=0;
+unsigned short gflogTbl[256];
+unsigned short gfilogTbl[256];
+static int ssd_open (struct inode *inode, struct file *filp)
+{
+        int ssdIdx;
+        int i=0;
+        void buildRAID6Table(void);
+        ssdIdx=iminor(filp->f_dentry->d_inode);
+        printk("\n the value of ssdIdx %d",ssdIdx);
+        if(ssdIdx==7)
+        {
+          for(i=0;i<MAX_SSD_DEV;i++)
+          ssdDevs[i].size = MAX_LBAS_PER_SSD*LBA_SIZE;
+        }    
+        printk(KERN_INFO "SSD: OPENED\n");
+	return 0;
+}
+
+
+static int ssd_release(struct inode *inode, struct file *filp)
+{
+        printk(KERN_INFO "SSD: RELEASED\n");
+	return 0;
+}
+
+
+loff_t ssd_llseek(struct file *filp, loff_t off, int whence)
+{
+        struct ssd_dev *dev = filp->private_data;
+        loff_t newpos;
+
+        switch(whence) {
+          case 0: /* SEEK_SET */
+                newpos = off;
+                break;
+
+          case 1: /* SEEK_CUR */
+                newpos = filp->f_pos + off;
+                break;
+
+          case 2: /* SEEK_END */
+                newpos = dev->size + off;
+                break;
+
+          default: /* can't happen */
+                return -EINVAL;
+        }
+        if (newpos < 0) return -EINVAL;
+        filp->f_pos = newpos;
+        return newpos;
+}
+
+
+
+ssize_t ssd_read(struct file *filp,
+                 char __user *buf,
+                 size_t count,
+                 loff_t *f_pos)
+{
+        ssize_t retval = 0;
+        int ssdIdx;
+
+        ssdIdx=iminor(filp->f_dentry->d_inode);
+        printk(KERN_INFO "SSD: READ started for %d\n", ssdIdx);
+
+        if(buf == (char *)0)
+            return EFAULT;
+
+        if (down_interruptible(&ssdDevs[ssdIdx].sem))
+            return -ERESTARTSYS;
+        if(ssdIdx!=7)
+        {
+		if(diskFail == ssdIdx)
+		{
+			printk("Disk Error\n");
+			up(&ssdDevs[ssdIdx].sem);
+			return -EFAULT;
+		}
+
+        	if (*f_pos >= ssdDevs[ssdIdx].size)
+        	{
+            	//up(&ssdDevs[ssdIdx].sem);
+            	return -EIO;
+       		}
+
+        	// Read up to end of SSD buffer
+        	//
+        	if (*f_pos + count > ssdDevs[ssdIdx].size)
+                	count = ssdDevs[ssdIdx].size - *f_pos;
+
+
+        	if(copy_to_user(buf, &ssdData[ssdIdx][*f_pos], count))
+        	{
+            	up(&ssdDevs[ssdIdx].sem);
+            	return -EFAULT;
+        	}
+        	else
+        	{
+            	*f_pos += count;
+            	retval = count;
+        	}
+        }
+        else
+         {
+		if(diskFail != 255)
+		{
+			raid5_recover(diskFail);
+			diskFail = 255; //back to healthy state
+		}
+            	decode_raid_6();
+             	if(copy_to_user(buf, read_buffer, 512))
+        	{
+            		up(&ssdDevs[ssdIdx].sem);
+            		return -EFAULT;
+        	}
+         }
+        up(&ssdDevs[ssdIdx].sem);
+
+        printk(KERN_INFO "SSD: READ finished\n");
+        return retval;
+}
+
+
+ssize_t ssd_write(struct file *filp,
+                  const char __user *buf,
+                  size_t count,
+                  loff_t *f_pos)
+{
+        ssize_t retval = -ENOMEM;
+        int ssdIdx,i;
+
+        ssdIdx=iminor(filp->f_dentry->d_inode);
+
+        printk(KERN_INFO "SSD: WRITE started for %d\n", ssdIdx);
+        if (down_interruptible(&ssdDevs[ssdIdx].sem))
+                return -ERESTARTSYS;
+        if(ssdIdx==7)
+        {
+          if(diskFail != 255)
+		{
+		raid5_recover(diskFail);
+		diskFail = 255; //back to healthy state
+		}
+         //Assumption::User always passes a 512 byte raid
+           /* writecount+=count;
+            if 
+           if(writecount==512)
+           {
+             copy_from_user(write_buffer,buf,count);
+             writecount=0;
+            }
+
+            else
+            {
+              if(writecount>512)
+              {
+                difference=writecount-512;
+                copy_from_user(write_buffer,buf,difference);
+                
+              }
+              else
+              {
+
+              }
+            }*/
+            
+            copy_from_user(write_buffer,buf,512);
+            //printk("\n CAME OUT FROM copy_from_user");
+            for(i=0;i<512;i++)
+            //printk("%c",write_buffer[i]);
+            compute_raid_6();
+        }      
+        
+
+        // Copy data from user buffer to SSD
+        //
+        // Take into account byte offset to LBA mapping and
+        // apply RAID mapping including any read-modify-write operations
+        // required and computation of new parity LBA.
+        //
+        // Starting example does simple copy only.
+        //
+        else
+        {
+	
+	if(diskFail == ssdIdx)
+	{
+	printk("Disk Error\n");
+	up(&ssdDevs[ssdIdx].sem);
+	return -EFAULT;
+	}
+	else
+	{
+       	 	if(copy_from_user(&ssdData[ssdIdx][*f_pos], buf, count))
+       	 	{
+           	 up(&ssdDevs[ssdIdx].sem);
+            	return -EFAULT;
+        	}
+       		else
+        	{
+            	// Update file position
+            	*f_pos += count;
+            	retval = count;
+        	}
+
+
+        	/* update the size */
+        	if (ssdDevs[ssdIdx].size < *f_pos)
+                ssdDevs[ssdIdx].size = *f_pos;
+        	}
+	}
+        up(&ssdDevs[ssdIdx].sem);
+
+        printk(KERN_INFO "SSD: WRITE finished\n");
+        return retval;
+}
+
+
+long ssd_ioctl(/*struct inode *inode,*/ struct file *filp,
+                 unsigned int cmd, unsigned long arg)
+{
+        int retval = 0, j;
+        int ssdIdx;
+        printk("\n ENTERING THE IOCTL");
+
+        ssdIdx=iminor(filp->f_dentry->d_inode);
+        
+	printk("SSD::ssdidx=%d",ssdIdx);
+        if(cmd == 0) return -EFAULT;
+         
+        switch(cmd)
+        {
+             /*lock_kernel();*/
+          case SSD_IOCTL_ERASE:
+            printk("\n ENTERING THE SWITCH CASE"); 
+            // Erase each SSD to all F's
+            for(j=0;j<(LBA_SIZE/4)*MAX_LBAS_PER_SSD;j++)
+            {
+                *((unsigned int *)(&ssdData[ssdIdx][j]))=0xFFFFFFFF;
+                if(j>0 && j<=512) 
+                printk("%d",j);
+            }
+		/*disk fail flag set*/
+		diskFail = ssdIdx;
+            /*unlock_kernel();*/
+            break;
+         case SSD_IOCTL_RECOVER:
+           raid5_recover(ssdIdx);
+	   diskFail = 255; // all disks recovered
+           break;
+
+          default:  /* redundant, as cmd was checked against MAXNR */
+          /*unlock_kernel();*/      
+          return -ENOTTY;
+        }
+
+        return retval;
+
+}
+
+static void ssd_setup_cdev(struct cdev *dev, int minor, struct file_operations *fops)
+{
+	int err, devno = MKDEV(ssd_major, minor);
+    
+	cdev_init(dev, fops);
+	dev->owner = THIS_MODULE;
+	dev->ops = fops;
+	err = cdev_add (dev, devno, 1);
+
+	/* Fail gracefully if need be */
+	if (err)
+	    printk (KERN_NOTICE "SSD: Error %d adding ssd%d\n", err, minor);
+}
+
+
+static struct file_operations ssd_ops =
+{
+	.owner   = THIS_MODULE,
+        .llseek =   ssd_llseek,
+        .read =     ssd_read,
+        .write =    ssd_write,
+        .unlocked_ioctl = ssd_ioctl,
+	.open    = ssd_open,
+	.release = ssd_release,
+};
+
+
+static int ssd_init(void)
+{
+	int result, i, j;
+	dev_t dev = MKDEV(ssd_major, 0);
+
+	/* Figure out our device number. */
+	if (ssd_major)
+		result = register_chrdev_region(dev, MAX_SSD_DEV, "ssd");
+	else
+        {
+		result = alloc_chrdev_region(&dev, 0, MAX_SSD_DEV, "ssd");
+		ssd_major = MAJOR(dev);
+	}
+	if (result < 0)
+        {
+		printk(KERN_WARNING "SSD: unable to get major %d\n", ssd_major);
+		return result;
+	}
+	if (ssd_major == 0)
+		ssd_major = result;
+
+	/* Now set up SSD cdevs. */
+        for(i=0;i<MAX_SSD_DEV;i++)
+        {
+	    ssd_setup_cdev(ssdCdevs+i, i, &ssd_ops);
+
+            sema_init(&ssdDevs[i].sem,1);
+
+            // Erase each SSD to all F's
+            for(j=0;j<(LBA_SIZE/4)*MAX_LBAS_PER_SSD;j++)
+            {
+                *((unsigned int *)(&ssdData[i][j]))=0xFFFFFFFF;
+            }
+        }
+            ssd_setup_cdev(ssdCdevs+i, i, &ssd_ops);
+
+            sema_init(&ssdDevs[i].sem,1);
+
+
+        printk(KERN_INFO "SSD: INITIALIZED %d SSD ram devices\n", MAX_SSD_DEV);
+
+	return 0;
+}
+
+
+static void ssd_cleanup(void)
+{
+    int i;
+
+    for(i=0;i<MAX_SSD_DEV;i++)
+    {
+        cdev_del(ssdCdevs+i);
+    }
+    unregister_chrdev_region(MKDEV(ssd_major, 0), MAX_SSD_DEV);
+}
+
+
+
+// RAID-6 encoding of Error Correcting Q Check Code
+//
+// Do Galois Field P,Q calculations for RAID-6 on a byte level
+//
+// Notes: 
+// Would be better to extend to 64-bit words for efficiency, but I don't know
+// the GF primitive polynomial for S=64 to derive GF log and ilog functions, so
+// this will have to do for now.
+//
+// This is 71% capacity with 2/7 LBAs used for parity and correction code space.
+//
+void qLBA(unsigned long long *LBA1,
+          unsigned long long *LBA2,
+          unsigned long long *LBA3,
+          unsigned long long *LBA4,
+          unsigned long long *LBA5,
+          unsigned char *QLBA)
+{
+    int i;
+    unsigned char *bptrLBA1=(unsigned char *)LBA1;
+    unsigned char *bptrLBA2=(unsigned char *)LBA2;
+    unsigned char *bptrLBA3=(unsigned char *)LBA3;
+    unsigned char *bptrLBA4=(unsigned char *)LBA4;
+    unsigned char *bptrLBA5=(unsigned char *)LBA5;
+    unsigned char *bptrQLBA=QLBA;
+
+    // Do Q as 8-bit GF computation
+    for(i=0;i<8;i++)
+    {
+        *bptrQLBA=0;
+
+	// Q Check Value encoding
+	//
+	// Note that g(0) = gfilogTbl[0] = 0x1
+	//           g(1) = gfilogTbl[1] = 0x2
+	//           ...
+	//           g(4) = gfilogTbl[4] = 0x10
+	//
+        *bptrQLBA=(gfilogTbl[gflogTbl[gfilogTbl[0]]+gflogTbl[*bptrLBA1]])^
+	  	  (gfilogTbl[gflogTbl[gfilogTbl[1]]+gflogTbl[*bptrLBA2]])^
+		  (gfilogTbl[gflogTbl[gfilogTbl[2]]+gflogTbl[*bptrLBA3]])^
+		  (gfilogTbl[gflogTbl[gfilogTbl[3]]+gflogTbl[*bptrLBA4]])^
+		  (gfilogTbl[gflogTbl[gfilogTbl[4]]+gflogTbl[*bptrLBA5]]);
+
+        bptrQLBA++;bptrLBA1++;bptrLBA2++;bptrLBA3++;bptrLBA4++;bptrLBA5++;
+    }
+}
+
+unsigned long long *cur_loc,*cur_ssd;
+void compute_raid_6(void)
+{
+    unsigned char i=0,j=0,p=5,q=6;
+    unsigned int k=0;
+    unsigned long long data_ip[5],qparity;
+    unsigned long long parity_out;
+    cur_loc=(unsigned long long *)write_buffer;
+    
+    
+   
+    for(k=0;k<13;k++)
+    {       //printk("\n INSIDE K LOOP K:%d",k);
+	    data_ip[0]=*cur_loc;
+	    //printk("\n THE VALUE OF data_ip[0]:%d",data_ip[0])
+            //printchar(data_ip[0]);
+            cur_loc++;
+	    data_ip[1]=*cur_loc;
+             //printchar(data_ip[1]);
+            //printk("\n THE VALUE OF data_ip[1]:%d",data_ip[1]);
+	    cur_loc++;
+	    data_ip[2]=*cur_loc;
+             //printchar(data_ip[2]);
+            //printk("\n THE VALUE OF data_ip[2]:%d",data_ip[2]);
+	    cur_loc++;
+	    data_ip[3]=*cur_loc;
+            //printchar(data_ip[3]);
+            //printk("\n THE VALUE OF data_ip[3]:%d",data_ip[3]);
+            cur_loc++;
+            data_ip[4]=*cur_loc;
+            cur_loc++;
+	    parity_out=data_ip[0] ^ data_ip[1] ^ data_ip[2] ^ data_ip[3]^data_ip[4] ;      
+	    j=0;
+	    for(i=0;i<7;i++)
+	    {
+              cur_ssd=ssdData[i];
+              //printk("\n INSIDE i LOOP i:%d",i);
+	      if(i!=p && i!=q)
+	       {
+                cur_ssd[k]=data_ip[j];                 
+		j++;
+ 		//printchar(cur_ssd[k]);
+               //printk("\n THE value of cur_ssd:%d",cur_ssd[k]);
+	       }
+	      else if(i==p)
+	       { 
+               /*Store p parity*/
+		cur_ssd[k]=parity_out;
+ 
+	       }
+              else if (i==q) 
+                {
+               /*Store q parity*/
+               qLBA(&data_ip[0],&data_ip[1],&data_ip[2],&data_ip[3],&data_ip[4],(unsigned char *)&qparity);
+               cur_ssd[k]=qparity;
+     
+                }
+                
+	        }
+	    if(p==0)
+	    p=6;
+	    else if(p!=0)
+	    p--;
+            
+            if(q==0)
+	    q=6;
+	    else if(q!=0)
+	    q--;
+    }
+}
+
+char f;
+unsigned long long *read_loc,**read_ssd;
+void decode_raid_6()
+{
+        unsigned char p=5,q=6,k=0,j=0,i=0;
+        
+	read_ssd=(unsigned long long *)ssdData;
+        read_loc=(unsigned long long *)read_buffer;
+        for(k=0;k<13;k++)
+        {   
+            for(i=0;i<7;i++)
+            {
+              read_ssd=ssdData[i];
+              if(i!=p && i!=q)
+              {
+               read_loc[j]=read_ssd[k];
+               j++;
+               }
+            }
+            //printk("\n The value of p is %d\n",p);
+            if(p==0)
+	    p=6;
+	    else if(p!=0)
+	    p--;
+
+          if(q==0)
+	    q=6;
+	    else if(q!=0)
+	    q--;
+        }
+}
+
+void raid5_recover(int failure)
+{
+unsigned long long recover;
+int k,i;
+cur_ssd=(unsigned long long *)ssdData;
+
+ for(k=0;k<16;k++)
+    {     
+ 
+	    recover = 0;
+	    for(i=0;i<5;i++)
+	    {      
+             
+	      if(i!=failure)
+	       {
+   		cur_ssd=ssdData[i];
+               recover ^=cur_ssd[k];               
+		
+	   	}
+	    }
+	
+	cur_ssd = ssdData[failure];
+	cur_ssd[k] = recover;
+            
+  
+	} 
+}
+void buildRAID6Table(void)
+{
+    unsigned int primPoly8=0x11d;
+    unsigned int b=1, i;
+
+    for(i=0;i<256-1;i++)
+    {
+        gflogTbl[b]=(unsigned char)i;
+	gfilogTbl[i]=(unsigned char)b;
+
+	// multiply b by 2
+	b<<=1;
+
+	if(b & 256) b^=primPoly8;
+    }  
+}
+module_init(ssd_init);
+module_exit(ssd_cleanup);

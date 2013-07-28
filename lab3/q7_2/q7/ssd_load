@@ -1,0 +1,24 @@
+#!/bin/sh
+module="ssd"
+device="ssd"
+mode="664"
+block="ssdr"
+# invoke insmod with all arguments we got
+# and use a pathname, as newer modutils don't look in . by default
+/sbin/insmod -f ./$module.ko $* || exit 1
+
+major=`cat /proc/devices | awk "\\$2==\"$module\" {print \\$1}"`
+
+# Remove stale nodes and replace them, then give gid and perms
+# Usually the script is shorter, it's simple that has several devices in it.
+
+mknod /dev/${device}0 c $major 0
+mknod /dev/${device}1 c $major 1
+mknod /dev/${device}2 c $major 2
+mknod /dev/${device}3 c $major 3
+mknod /dev/${device}4 c $major 4
+mknod /dev/${device}5 c $major 5
+mknod /dev/${device}6 c $major 6
+mknod /dev/${block}   c $major 7
+chmod $mode  /dev/${device}*
+chmod $mode  /dev/${block}

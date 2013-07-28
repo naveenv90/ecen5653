@@ -53,19 +53,19 @@ int main(void)
 
 
 /*********************************************************************************/
- if((ssd2=open("/dev/ssd2", O_RDWR)) < 0)
+ if((ssd1=open("/dev/ssd1", O_RDWR)) < 0)
     {
-        printf("ERROR opening SSD2\n");
+        printf("ERROR opening SSD1\n");
         exit(-1);
     }
     else
     {
-        printf("ssd=%d opened\n", ssd2);
+        printf("ssd=%d opened\n", ssd1);
     }
 
-   ioctl(ssd2,SSD_IOCTL_ERASE,0);
-   printf("ssd2 erased\n"); //ssd2 failed
-	printf("WRITE TO SSD2:\n");
+   ioctl(ssd1,SSD_IOCTL_ERASE,0);
+   printf("ssd1 erased\n"); //ssd2 failed
+	printf("WRITE TO SSD1:\n");
    	// lseek(ssd1, 0, SEEK_SET);
     	write(ssdr, &testLBA2[0], 512);
  
@@ -117,5 +117,5 @@ int main(void)
     printf("\n");
     printf("test = %2X %2X %2X %2X\n", testLBA1[1], testLBA1[2], testLBA1[3], testLBA1[4]);
 */
-    close(ssd1);
+    close(ssdr);
 }
