@@ -15,7 +15,24 @@
 
 static char testLBA1[512]= TEST_RAID_STRING;
 static char testLBA2[512]= TEST_RAID_STRING;
+typedef unsigned long long int UINT64;
 
+UINT64 startTSC = 0;
+UINT64 stopTSC = 0;
+UINT64 cycleCnt = 0;
+
+UINT64 readTSC(void)
+{
+   UINT64 ts;
+
+   __asm__ volatile(".byte 0x0f,0x31" : "=A" (ts));
+   return ts;
+}
+
+UINT64 cyclesElapsed(UINT64 stopTS, UINT64 startTS)
+{
+   return (stopTS - startTS);
+}
 
 
 
@@ -39,14 +56,22 @@ int main(void)
     
     printf("\n");
     printf("\n RAID 6 IMPLEMENTATION");
+    startTSC=readTSC();
     printf("WRITE TO SSD:\n");
    // lseek(ssd1, 0, SEEK_SET);
     write(ssdr, &testLBA2[0], 512);
-
+    stopTSC=readTSC();
+    cycleCnt=cyclesElapsed(stopTSC,startTSC);
+    printf("\n Time taken to write 512 bytes %llu",cycleCnt);
+    
 
   // Read and print out first N bytes
     printf("READ FROM SSD:\n");
+     startTSC=readTSC();
     read(ssdr, &testLBA1[0], 512);
+    stopTSC=readTSC();
+    cycleCnt=cyclesElapsed(stopTSC,startTSC);
+    printf("\n Time taken to read 512 bytes %llu",cycleCnt);
     //printf("test = %2X %2X %2X %2X\n", testLBA1[508], testLBA1[509], testLBA1[510], testLBA1[511]);
     for (i=0;i<512;i++)
     printf("%c",testLBA1[i]);
