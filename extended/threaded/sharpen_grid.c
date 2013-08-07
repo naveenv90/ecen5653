@@ -18,6 +18,7 @@
 #define NUMBER_THREADS 1800
 #define TOTAL_FRAMES 24
 typedef double FLOAT;
+double seconds;
 
 //pthread_t threads[NUM_ROW_THREADS*NUM_COL_THREADS];
 pthread_t threads[NUMBER_THREADS];
@@ -73,6 +74,9 @@ void *frameThread(void * threadNumber)
 
 int fdin,fdout,bytesLeft,thNum,i,j,bytesRead;
 char fileNameIn[50], fileNameOut[50];
+struct timeval StartTime,StopTime;
+unsigned int microsecs;
+
 UINT8 header[22];
         UINT8 *R=(UINT8 *)malloc(sizeof(UINT8)*IMG_HEIGHT*IMG_WIDTH);
 UINT8 *G=(UINT8 *)malloc(sizeof(UINT8)*IMG_HEIGHT*IMG_WIDTH);
@@ -84,6 +88,7 @@ FLOAT temp;
 
         //printf("Threadnumber is %d",threadNumber);
      //fflush(stdout);
+gettimeofday(&StartTime,0);
 for (thNum = (int) threadNumber; thNum< TOTAL_FRAMES; thNum+= NUMBER_THREADS)
 {
 
@@ -160,9 +165,15 @@ write(fdout, (void *)header, 21);
          write(fdout, (void *)&convB[i], 1);
      }	
      close(fdout);
+     gettimeofday(&StopTime,0);
+      microsecs=((StopTime.tv_sec - StartTime.tv_sec)*1000000);
 
+	if(StopTime.tv_usec > StartTime.tv_usec)
+		microsecs+=(StopTime.tv_usec - StartTime.tv_usec);
+	else
+		microsecs-=(StartTime.tv_usec - StopTime.tv_usec);
+       seconds+=((double)microsecs/1000000);
 }
-
 
 free(R);
 free(G);
@@ -204,6 +215,7 @@ break;
 
 void *testThread(void *threadid)
 {
+
 int i;
     for(i=0;i<NUMBER_THREADS;i++)
 {
@@ -214,7 +226,8 @@ int i;
 
    for(i=0;i<NUMBER_THREADS;i++)
      pthread_join(threads[i], NULL);
-     printf("im here1");
+
+ printf("time take to process %d FRAMES is %f",TOTAL_FRAMES,seconds);
 
    if(pthread_attr_destroy(&rt_sched_attr) != 0)
      perror("attr destroy");
